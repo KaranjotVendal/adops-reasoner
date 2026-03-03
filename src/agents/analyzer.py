@@ -1,6 +1,7 @@
 """Analyzer agent - generates campaign recommendations via LLM."""
 
 import json
+import logging
 import re
 
 from src.agents.providers.base import ProviderInterface
@@ -10,6 +11,8 @@ from src.domain.models import (
     CampaignMetrics,
     RecommendedAction,
 )
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a Campaign Analyst agent. Your role is to analyze marketing campaign metrics and recommend optimal actions.
 
@@ -94,34 +97,64 @@ class AnalyzerAgent:
             response_format={"type": "json_object"},
         )
 
-        parsed = self._parse_response(response.content)
+        parsed = self._parse_response(response.content, response.raw_response)
         return self._build_analysis(metrics, parsed)
 
-    def _parse_response(self, content: str) -> dict:
+    def _parse_response(self, content: str | None, raw_response: dict | None = None) -> dict:
         """Parse LLM response into structured dict.
 
+        Follows Mini-Agent patterns for robust handling:
+        - content can be None or empty string
+        - tool_calls may be present even with empty content
+        - Multiple fallback strategies for parsing
+
         Args:
-            content: Raw LLM response content
+            content: Raw LLM response content (can be None)
+            raw_response: Full API response for advanced parsing
 
         Returns:
             Parsed dict with recommended_action, reasoning, confidence, key_factors
         """
-        # Try direct JSON parse first
-        try:
-            data = json.loads(content)
-            if "recommended_action" in data:
-                return data
-        except json.JSONDecodeError:
-            pass
+        # Handle None or non-string content (Mini-Agent pattern: message.content or "")
+        if content is None:
+            content = ""
+        elif not isinstance(content, str):
+            content = str(content) if content else ""
 
-        # Try regex extraction for robustness
+        # Check raw_response for tool_calls (Mini-Agent pattern)
+        # Even with empty content, model might return tool_calls
+        if raw_response:
+            parsed_from_raw = self._try_parse_from_raw_response(raw_response)
+            if parsed_from_raw:
+                return parsed_from_raw
+
+        # Try direct JSON parse first
+        if content.strip():
+            try:
+                data = json.loads(content)
+                if isinstance(data, dict) and "recommended_action" in data:
+                    return data
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Try regex extraction for robustness (handles fenced markdown)
+        cleaned = self._strip_markdown_fences(content)
+        if cleaned.strip():
+            try:
+                data = json.loads(cleaned)
+                if isinstance(data, dict) and "recommended_action" in data:
+                    return data
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Try simpler regex fallback
         match = self._json_pattern.search(content)
         if match:
             try:
                 data = json.loads(match.group())
-                if "recommended_action" in data:
+                if isinstance(data, dict) and "recommended_action" in data:
                     return data
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
                 pass
 
         # Fallback: extract action via regex, use defaults for rest
@@ -154,6 +187,77 @@ class AnalyzerAgent:
             },
             "key_factors": ["Analysis failed"],
         }
+
+    def _try_parse_from_raw_response(self, raw_response: dict) -> dict | None:
+        """Attempt to parse response from raw API response.
+
+        Mini-Agent pattern: check message.content AND tool_calls in raw response.
+
+        Args:
+            raw_response: Full API response dict
+
+        Returns:
+            Parsed dict if successful, None otherwise
+        """
+        try:
+            # Navigate typical OpenAI-compatible response structure
+            # {"choices": [{"message": {"content": "...", "tool_calls": [...]}}]}
+            choices = raw_response.get("choices", [])
+            if not choices:
+                return None
+
+            message = choices[0].get("message", {})
+
+            # Check for tool_calls first (even if content is empty)
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                # Tool calling mode - extract from first tool call
+                logger.debug(f"Response contains {len(tool_calls)} tool calls")
+                # For now, we don't handle tool calling in analyzer
+                # But we could extract arguments from tool call if needed
+
+            # Try content as before
+            content = message.get("content")
+            if content and isinstance(content, str):
+                try:
+                    data = json.loads(content)
+                    if isinstance(data, dict) and "recommended_action" in data:
+                        return data
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
+            logger.debug(f"Raw response parsing failed: {e}")
+
+        return None
+
+    def _strip_markdown_fences(self, content: str) -> str:
+        """Strip markdown code fences from content.
+
+        Handles:
+        - ```json ... ```
+        - ``` ... ```
+
+        Args:
+            content: Raw content possibly with markdown fences
+
+        Returns:
+            Content with fences stripped
+        """
+        # Remove ```json and ``` blocks
+        lines = content.split("\n")
+        result_lines = []
+        in_fence = False
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            if not in_fence:
+                result_lines.append(line)
+
+        return "\n".join(result_lines).strip()
 
     def _build_analysis(
         self, metrics: CampaignMetrics, parsed: dict
