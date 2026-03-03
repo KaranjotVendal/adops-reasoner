@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local planning docs (do not commit)
+docs/
