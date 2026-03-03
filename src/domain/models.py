@@ -23,10 +23,10 @@ class CampaignMetrics(BaseModel):
     cpa_3d_trend: float = Field(..., description="CPA trend over last 3 days (ratio)")
     ctr_current: float = Field(..., ge=0.0, le=1.0, description="Current click-through rate (0-1)")
     ctr_7d_avg: float = Field(..., ge=0.0, le=1.0, description="7-day average CTR (0-1)")
-    audience_saturation: float = Field(..., description="Audience saturation level (0-1)")
-    creative_age_days: int = Field(..., description="Age of current creative in days")
-    conversion_volume_7d: int = Field(..., description="Conversions in last 7 days")
-    spend_7d: float = Field(..., description="Total spend in last 7 days")
+    audience_saturation: float = Field(..., ge=0.0, le=1.0, description="Audience saturation level (0-1)")
+    creative_age_days: int = Field(..., ge=0, description="Age of current creative in days")
+    conversion_volume_7d: int = Field(..., ge=0, description="Conversions in last 7 days")
+    spend_7d: float = Field(..., ge=0.0, description="Total spend in last 7 days")
 
 
 class AnalysisConfidence(BaseModel):

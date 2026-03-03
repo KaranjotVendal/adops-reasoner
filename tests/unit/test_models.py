@@ -47,7 +47,7 @@ class TestCampaignMetrics:
             )
 
     def test_negative_cpa_trend(self):
-        """Test that negative CPA trend is allowed (improvement)."""
+        """Test that lower CPA trend values are allowed (improvement)."""
         metrics = CampaignMetrics(
             campaign_id="test_003",
             cpa_3d_trend=0.5,
@@ -59,6 +59,34 @@ class TestCampaignMetrics:
             spend_7d=500.0,
         )
         assert metrics.cpa_3d_trend == 0.5
+
+    def test_invalid_audience_saturation_range(self):
+        """Test that audience saturation outside 0-1 fails validation."""
+        with pytest.raises(ValidationError):
+            CampaignMetrics(
+                campaign_id="test_004",
+                cpa_3d_trend=1.1,
+                ctr_current=0.03,
+                ctr_7d_avg=0.035,
+                audience_saturation=1.2,
+                creative_age_days=10,
+                conversion_volume_7d=50,
+                spend_7d=500.0,
+            )
+
+    def test_negative_spend_fails(self):
+        """Test that negative spend fails validation."""
+        with pytest.raises(ValidationError):
+            CampaignMetrics(
+                campaign_id="test_005",
+                cpa_3d_trend=1.1,
+                ctr_current=0.03,
+                ctr_7d_avg=0.035,
+                audience_saturation=0.6,
+                creative_age_days=10,
+                conversion_volume_7d=50,
+                spend_7d=-1.0,
+            )
 
 
 class TestRecommendedAction:
