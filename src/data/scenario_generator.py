@@ -91,10 +91,12 @@ def generate_scenario(campaign_id: str, seed: int | None = None) -> dict[str, An
 def _generate_notes(metrics: CampaignMetrics, action: RecommendedAction) -> str:
     """Generate brief explanation notes for the scenario."""
     notes = []
+    safe_ctr_7d_avg = max(metrics.ctr_7d_avg, 0.001)
+
     if metrics.cpa_3d_trend > 2.0:
         notes.append(f"CPA trending up {metrics.cpa_3d_trend:.1f}x")
-    if metrics.ctr_current / max(metrics.ctr_7d_avg, 0.001) < 0.7:
-        notes.append(f"CTR dropped {((1 - metrics.ctr_current / metrics.ctr_7d_avg) * 100):.0f}%")
+    if metrics.ctr_current / safe_ctr_7d_avg < 0.7:
+        notes.append(f"CTR dropped {((1 - metrics.ctr_current / safe_ctr_7d_avg) * 100):.0f}%")
     if metrics.audience_saturation > 0.8:
         notes.append(f"High audience saturation {metrics.audience_saturation:.0%}")
     if metrics.creative_age_days > 14:
