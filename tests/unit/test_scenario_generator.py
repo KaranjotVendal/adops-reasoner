@@ -134,10 +134,9 @@ class TestGenerateDataset:
     """Tests for dataset generation."""
 
     def test_generate_dataset_count(self):
-        """Test that dataset generates correct number of scenarios."""
+        """Test that dataset generates the exact requested number of scenarios."""
         scenarios = generate_dataset(num_scenarios=30, output_path=None)
-        # Should have balanced distribution + edge cases
-        assert len(scenarios) >= 30
+        assert len(scenarios) == 30
 
     def test_generate_dataset_includes_edge_cases(self):
         """Test that edge cases are included."""
