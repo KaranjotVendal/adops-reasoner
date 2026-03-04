@@ -91,10 +91,12 @@ def generate_scenario(campaign_id: str, seed: int | None = None) -> dict[str, An
 def _generate_notes(metrics: CampaignMetrics, action: RecommendedAction) -> str:
     """Generate brief explanation notes for the scenario."""
     notes = []
+    safe_ctr_7d_avg = max(metrics.ctr_7d_avg, 0.001)
+
     if metrics.cpa_3d_trend > 2.0:
         notes.append(f"CPA trending up {metrics.cpa_3d_trend:.1f}x")
-    if metrics.ctr_current / max(metrics.ctr_7d_avg, 0.001) < 0.7:
-        notes.append(f"CTR dropped {((1 - metrics.ctr_current / metrics.ctr_7d_avg) * 100):.0f}%")
+    if metrics.ctr_current / safe_ctr_7d_avg < 0.7:
+        notes.append(f"CTR dropped {((1 - metrics.ctr_current / safe_ctr_7d_avg) * 100):.0f}%")
     if metrics.audience_saturation > 0.8:
         notes.append(f"High audience saturation {metrics.audience_saturation:.0%}")
     if metrics.creative_age_days > 14:
@@ -242,8 +244,10 @@ ACTION_GENERATORS = {
 def generate_dataset(num_scenarios: int = 50, output_path: Path | None = None) -> list[dict]:
     """Generate a balanced dataset of campaign scenarios.
 
+    The returned list size is exactly ``num_scenarios`` (including edge cases).
+
     Args:
-        num_scenarios: Number of scenarios to generate
+        num_scenarios: Exact number of scenarios to generate
         output_path: Optional path to write JSONL file
 
     Returns:
@@ -255,22 +259,7 @@ def generate_dataset(num_scenarios: int = 50, output_path: Path | None = None) -
     actions = list(RecommendedAction)
     # Remove REQUIRES_HUMAN_REVIEW from generation (it's a validator output, not a labeled action)
     actions_to_generate = [a for a in actions if a != RecommendedAction.REQUIRES_HUMAN_REVIEW]
-    scenarios_per_action = num_scenarios // len(actions_to_generate)
 
-    campaign_counter = 1
-
-    for action in actions_to_generate:
-        generator = ACTION_GENERATORS[action]
-        for _ in range(scenarios_per_action):
-            scenario = generator(f"camp_{campaign_counter:04d}", seed=campaign_counter)
-            # Validate the generated scenario produces expected action
-            metrics = CampaignMetrics(**scenario["metrics"])
-            actual_action = label_campaign(metrics)
-            assert actual_action == action, f"Generated {actual_action}, expected {action}"
-            scenarios.append(scenario)
-            campaign_counter += 1
-
-    # Add edge cases
     edge_cases = [
         {
             "campaign_id": "edge_001",
@@ -303,7 +292,34 @@ def generate_dataset(num_scenarios: int = 50, output_path: Path | None = None) -
             "notes": "Healthy campaign: stable CPA, good CTR, low saturation",
         },
     ]
-    scenarios.extend(edge_cases)
+
+    edge_case_count = min(len(edge_cases), max(num_scenarios, 0))
+    base_scenarios = max(num_scenarios - edge_case_count, 0)
+
+    # Spread remaining scenarios approximately evenly across action types
+    scenarios_per_action = base_scenarios // len(actions_to_generate)
+    remainder = base_scenarios % len(actions_to_generate)
+
+    campaign_counter = 1
+
+    for idx, action in enumerate(actions_to_generate):
+        generator = ACTION_GENERATORS[action]
+        target_count = scenarios_per_action + (1 if idx < remainder else 0)
+
+        for _ in range(target_count):
+            scenario = generator(f"camp_{campaign_counter:04d}", seed=campaign_counter)
+            # Validate the generated scenario produces expected action
+            metrics = CampaignMetrics(**scenario["metrics"])
+            actual_action = label_campaign(metrics)
+            assert actual_action == action, f"Generated {actual_action}, expected {action}"
+            scenarios.append(scenario)
+            campaign_counter += 1
+
+    # Add edge cases up to requested total
+    scenarios.extend(edge_cases[:edge_case_count])
+
+    # Final safeguard to exact requested size
+    scenarios = scenarios[:num_scenarios]
 
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
