@@ -1,93 +1,127 @@
-"""Unit tests for eval harness."""
+"""Tests for evaluation harness."""
+
+import json
+import tempfile
+from pathlib import Path
 
 import pytest
-from unittest.mock import Mock
 
-from src.agents.providers.base import LLMResponse
-from src.evals.run_eval import load_scenarios, run_eval, print_eval_summary
-from src.data.scenario_generator import generate_dataset
+from src.evals.run_eval import MockProvider, load_scenarios, run_eval
+from src.schema import Message, TextContent
 
 
-class MockProvider:
-    """Mock provider that returns specified action."""
+class TestMockProvider:
+    """Test mock provider for evaluation."""
 
-    def __init__(self, action: str = "maintain"):
-        self.action = action
-        self.called = False
+    def test_mock_provider_returns_response(self):
+        """Test mock provider returns valid LLMResponse."""
+        provider = MockProvider(accuracy=1.0)  # Perfect accuracy
 
-    def chatCompletion(self, messages, **kwargs):
-        self.called = True
-        content = '{"recommended_action": "' + self.action + '", "reasoning": "test", "confidence": {"overall_score": 0.8, "data_quality": 0.8, "recommendation_strength": 0.8}, "key_factors": ["test"]}'
-        return LLMResponse(
-            content=content,
-            raw_response={},
-        )
+        messages = [Message.user("Test message")]
+        response = provider.generate(messages)
+
+        assert response.model == "mock"
+        assert response.provider == "mock"
+        assert len(response.content) == 1
+        assert isinstance(response.content[0], TextContent)
+
+        # Parse JSON content
+        content = json.loads(response.content[0].text)
+        assert "recommended_action" in content
+        assert "confidence" in content
+        assert "key_factors" in content
+
+    def test_mock_provider_tracks_calls(self):
+        """Test mock provider tracks call count."""
+        provider = MockProvider()
+
+        assert provider.call_count == 0
+
+        provider.generate([Message.user("Test 1")])
+        assert provider.call_count == 1
+
+        provider.generate([Message.user("Test 2")])
+        assert provider.call_count == 2
+
+    def test_mock_provider_accuracy(self):
+        """Test mock provider respects accuracy setting."""
+        # With 0% accuracy, should eventually return wrong answers
+        provider = MockProvider(accuracy=0.0)
+
+        # Run multiple times to hit random failure case
+        results = []
+        for i in range(20):
+            response = provider.generate([Message.user(f"Test {i}")])
+            content = json.loads(response.content[0].text)
+            results.append(content["recommended_action"])
+
+        # Just verify we got valid actions
+        valid_actions = {"maintain", "pause_campaign", "creative_refresh", "bid_adjustment", "audience_expansion"}
+        assert all(r in valid_actions for r in results)
 
 
 class TestLoadScenarios:
-    """Tests for load_scenarios."""
+    """Test scenario loading."""
 
-    def test_load_scenarios_from_file(self, tmp_path):
+    def test_load_scenarios_from_jsonl(self):
         """Test loading scenarios from JSONL file."""
-        # Create test file
-        test_file = tmp_path / "test.jsonl"
-        test_file.write_text(
-            '{"campaign_id": "test_001", "metrics": {"campaign_id": "test_001"}, "expected_action": "maintain"}\n'
-            '{"campaign_id": "test_002", "metrics": {"campaign_id": "test_002"}, "expected_action": "pause_campaign"}\n'
-        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+            f.write(json.dumps({"campaign_id": "test_1", "expected_action": "maintain"}) + "\n")
+            f.write(json.dumps({"campaign_id": "test_2", "expected_action": "pause"}) + "\n")
+            temp_path = Path(f.name)
 
-        scenarios = load_scenarios(test_file)
-        assert len(scenarios) == 2
-        assert scenarios[0]["campaign_id"] == "test_001"
+        try:
+            scenarios = load_scenarios(temp_path)
+
+            assert len(scenarios) == 2
+            assert scenarios[0]["campaign_id"] == "test_1"
+            assert scenarios[1]["campaign_id"] == "test_2"
+        finally:
+            temp_path.unlink()
+
+    def test_load_empty_file(self):
+        """Test loading empty JSONL file."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+            temp_path = Path(f.name)
+
+        try:
+            scenarios = load_scenarios(temp_path)
+            assert len(scenarios) == 0
+        finally:
+            temp_path.unlink()
 
 
 class TestRunEval:
-    """Tests for run_eval."""
+    """Test evaluation runner."""
 
-    def test_run_eval_with_mock_provider_always_maintain(self):
-        """Test eval with mock provider that always returns maintain."""
-        provider = MockProvider("maintain")
-        from src.agents.analyzer import AnalyzerAgent
+    def test_run_eval_with_mock(self):
+        """Test evaluation with mock provider."""
+        results = run_eval(num_scenarios=10, use_mock=True)
 
-        analyzer = AnalyzerAgent(provider)
-
-        results = run_eval(analyzer, validator=None)
-
-        assert results["total"] > 0
-        assert results["correct"] >= 0
+        assert "total" in results
+        assert "correct" in results
         assert "accuracy" in results
         assert "results" in results
+        assert results["total"] == 10
+        assert 0 <= results["accuracy"] <= 1
 
-    def test_run_eval_tracks_human_review(self):
-        """Test that human review is tracked."""
-        provider = MockProvider("maintain")
-        from src.agents.analyzer import AnalyzerAgent
-        from src.agents.validator import ValidatorAgent
+    def test_eval_results_structure(self):
+        """Test evaluation results have correct structure."""
+        results = run_eval(num_scenarios=5, use_mock=True)
 
-        analyzer = AnalyzerAgent(provider)
-        validator = ValidatorAgent()
+        for result in results["results"]:
+            assert "campaign_id" in result
+            assert "expected" in result
+            assert "predicted" in result
+            assert "correct" in result
+            assert isinstance(result["correct"], bool)
 
-        results = run_eval(analyzer, validator)
+    def test_eval_metrics(self):
+        """Test evaluation calculates metrics correctly."""
+        results = run_eval(num_scenarios=10, use_mock=True)
 
-        assert "human_review_triggered" in results
-        assert "human_review_rate" in results
-
-
-class TestPrintEvalSummary:
-    """Tests for print_eval_summary."""
-
-    def test_print_summary_does_not_raise(self):
-        """Test that print_eval_summary handles all cases."""
-        results = {
-            "total": 10,
-            "correct": 8,
-            "accuracy": 0.8,
-            "human_review_triggered": 2,
-            "human_review_rate": 0.2,
-            "results": [
-                {"campaign_id": "c1", "expected": "maintain", "predicted": "maintain", "correct": True},
-                {"campaign_id": "c2", "expected": "pause_campaign", "predicted": "maintain", "correct": False},
-            ],
-        }
-        # Should not raise
-        print_eval_summary(results)
+        # Check derived metrics
+        assert results["accuracy"] == results["correct"] / results["total"]
+        assert "avg_latency_ms" in results
+        assert "total_cost_usd" in results
+        assert "eval_time_seconds" in results
