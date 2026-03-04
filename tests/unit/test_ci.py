@@ -39,7 +39,8 @@ class TestCIConfig:
         jobs = data.get("jobs", {})
         assert "lint-and-test" in jobs
         assert "build-and-push" in jobs
-        assert "deploy-gcp" in jobs
+        assert "test-deployment" in jobs
+        assert "deploy-production" in jobs
 
     def test_dockerfile_exists(self):
         """Test that Dockerfile exists."""
