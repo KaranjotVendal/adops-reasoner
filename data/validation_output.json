@@ -1,0 +1,7 @@
+{
+  "decision": "approve",
+  "confidence": 0.82,
+  "feedback": "Analysis is sound: CTR decline 37.5%, creative age 18d > 14d threshold, CPA trending 2.2x all support creative_refresh. Reasoning correctly distinguishes creative fatigue from audience exhaustion given 75% saturation.",
+  "suggested_changes": [],
+  "requires_human_review": false
+}
