@@ -6,10 +6,15 @@ from dataclasses import dataclass
 
 @dataclass
 class LLMResponse:
-    """Structured response from LLM provider."""
+    """Structured response from LLM provider.
 
-    content: str
-    raw_response: dict
+    Following Mini-Agent patterns:
+    - content can be None or empty string (tool_calls may exist without content)
+    - raw_response available for advanced parsing
+    """
+
+    content: str | None = None
+    raw_response: dict | None = None
 
 
 class ProviderInterface(ABC):

@@ -66,7 +66,10 @@ class MiniMaxProvider(ProviderInterface):
             response.raise_for_status()
             data = response.json()
 
-        content = data["choices"][0]["message"]["content"]
+        # Following Mini-Agent pattern: message.content can be None when tool_calls present
+        message = data["choices"][0]["message"]
+        content = message.get("content")
+        # Store full response for advanced parsing (tool_calls, usage, etc.)
         return LLMResponse(content=content, raw_response=data)
 
     def health_check(self) -> bool:
