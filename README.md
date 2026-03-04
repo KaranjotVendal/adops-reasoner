@@ -1,10 +1,6 @@
-# Campaign Analyst
+# Adops Reasoner
 
 A multi-agent LLM-powered system for marketing campaign analysis and recommendations.
-
-[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.120+-green.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen.svg)]()
 
 ## Overview
 
