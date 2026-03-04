@@ -1,20 +1,24 @@
-"""Analyzer agent - generates campaign recommendations via LLM."""
+"""Analyzer agent - generates campaign recommendations via LLM.
 
-import json
+Refactored to use unified Anthropic-style providers with ContentBlock support.
+"""
+
 import logging
-import re
+from typing import Any
 
-from src.agents.providers.base import ProviderInterface
 from src.domain.models import (
     AnalysisConfidence,
     CampaignAnalysis,
     CampaignMetrics,
     RecommendedAction,
 )
+from src.providers import AnthropicStyleProvider
+from src.schema import ContentBlock, Message, TextContent, Tool, ToolUseContent
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a Campaign Analyst agent. Your role is to analyze marketing campaign metrics and recommend optimal actions.
+# Default system prompt for analyzer
+DEFAULT_ANALYZER_SYSTEM_PROMPT = """You are a Campaign Analyst agent. Your role is to analyze marketing campaign metrics and recommend optimal actions.
 
 You must respond with valid JSON only (no additional text). Use this exact schema:
 {
@@ -37,134 +41,206 @@ Available actions:
 
 Analyze the campaign metrics provided and return your recommendation."""
 
-USER_PROMPT_TEMPLATE = """Analyze this campaign:
-
-Campaign ID: {campaign_id}
-CPA 3-day trend: {cpa_3d_trend}x
-Current CTR: {ctr_current:.2%}
-7-day avg CTR: {ctr_7d_avg:.2%}
-Audience saturation: {audience_saturation:.0%}
-Creative age: {creative_age_days} days
-Conversions (7d): {conversion_volume_7d}
-Spend (7d): ${spend_7d:.2f}
-
-Provide your recommendation as JSON."""
-
 
 class AnalyzerAgent:
-    """Agent that analyzes campaign metrics and generates recommendations."""
+    """Agent that analyzes campaign metrics and generates recommendations.
 
-    def __init__(self, provider: ProviderInterface):
+    Uses Anthropic-style LLM providers (Kimi, MiniMax) with unified ContentBlock interface.
+    Supports thinking/reasoning capture and tool use.
+    """
+
+    def __init__(
+        self,
+        provider: AnthropicStyleProvider,
+        system_prompt: str | None = None,
+        enable_thinking: bool = False,
+    ):
         """Initialize analyzer with LLM provider.
 
         Args:
-            provider: LLM provider instance (e.g., MiniMaxProvider)
+            provider: Anthropic-style LLM provider (Kimi or MiniMax)
+            system_prompt: Custom system prompt (uses default if None)
+            enable_thinking: Whether to capture model's reasoning/thinking
         """
         self.provider = provider
-        self._action_pattern = re.compile(
-            r'"recommended_action"\s*:\s*"([^"]+)"',
-            re.IGNORECASE,
-        )
-        self._json_pattern = re.compile(r'\{[^{}]*"recommended_action"[^{}]*\}', re.DOTALL)
+        self.system_prompt = system_prompt or DEFAULT_ANALYZER_SYSTEM_PROMPT
+        self.enable_thinking = enable_thinking
 
-    def analyze(self, metrics: CampaignMetrics) -> CampaignAnalysis:
+    def analyze(
+        self,
+        metrics: CampaignMetrics,
+        tools: list[Tool] | None = None,
+    ) -> CampaignAnalysis:
         """Analyze campaign metrics and return recommendation.
 
         Args:
             metrics: Campaign metrics to analyze
+            tools: Optional tools available to the model
 
         Returns:
             CampaignAnalysis with recommendation and reasoning
         """
-        user_prompt = USER_PROMPT_TEMPLATE.format(
-            campaign_id=metrics.campaign_id,
-            cpa_3d_trend=metrics.cpa_3d_trend,
-            ctr_current=metrics.ctr_current,
-            ctr_7d_avg=metrics.ctr_7d_avg,
-            audience_saturation=metrics.audience_saturation,
-            creative_age_days=metrics.creative_age_days,
-            conversion_volume_7d=metrics.conversion_volume_7d,
-            spend_7d=metrics.spend_7d,
-        )
+        # Build conversation messages
+        messages = self._build_messages(metrics)
 
-        response = self.provider.chatCompletion(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
+        # Call LLM
+        response = self.provider.generate(
+            messages=messages,
+            tools=tools,
+            max_tokens=4096,
             temperature=0.3,
-            max_tokens=800,
-            response_format={"type": "json_object"},
+            thinking=self.enable_thinking,
         )
 
-        parsed = self._parse_response(response.content, response.raw_response)
-        return self._build_analysis(metrics, parsed)
+        # Parse response from content blocks
+        parsed = self._parse_content_blocks(response.content)
 
-    def _parse_response(self, content: str | None, raw_response: dict | None = None) -> dict:
-        """Parse LLM response into structured dict.
+        return self._build_analysis(metrics, parsed, response)
 
-        Follows Mini-Agent patterns for robust handling:
-        - content can be None or empty string
-        - tool_calls may be present even with empty content
-        - Multiple fallback strategies for parsing
+    def _build_messages(self, metrics: CampaignMetrics) -> list[Message]:
+        """Build conversation messages for LLM.
 
         Args:
-            content: Raw LLM response content (can be None)
-            raw_response: Full API response for advanced parsing
+            metrics: Campaign metrics
+
+        Returns:
+            List of messages (system + user)
+        """
+        user_prompt = self._build_user_prompt(metrics)
+
+        return [
+            Message.system(self.system_prompt),
+            Message.user(user_prompt),
+        ]
+
+    def _build_user_prompt(self, metrics: CampaignMetrics) -> str:
+        """Build user prompt with campaign metrics.
+
+        Args:
+            metrics: Campaign metrics
+
+        Returns:
+            Formatted prompt string
+        """
+        return f"""Analyze this campaign:
+
+Campaign ID: {metrics.campaign_id}
+CPA 3-day trend: {metrics.cpa_3d_trend}x
+Current CTR: {metrics.ctr_current:.2%}
+7-day avg CTR: {metrics.ctr_7d_avg:.2%}
+Audience saturation: {metrics.audience_saturation:.0%}
+Creative age: {metrics.creative_age_days} days
+Conversions (7d): {metrics.conversion_volume_7d}
+Spend (7d): ${metrics.spend_7d:.2f}
+
+Provide your recommendation as JSON."""
+
+    def _parse_content_blocks(self, content: list[ContentBlock]) -> dict[str, Any]:
+        """Parse content blocks to extract analysis result.
+
+        Handles:
+        - Text blocks containing JSON
+        - Thinking blocks (captured if enable_thinking=True)
+        - Tool use blocks (future extension)
+
+        Args:
+            content: List of content blocks from LLM
 
         Returns:
             Parsed dict with recommended_action, reasoning, confidence, key_factors
         """
-        # Handle None or non-string content (Mini-Agent pattern: message.content or "")
-        if content is None:
-            content = ""
-        elif not isinstance(content, str):
-            content = str(content) if content else ""
+        import json
 
-        # Check raw_response for tool_calls (Mini-Agent pattern)
-        # Even with empty content, model might return tool_calls
-        if raw_response:
-            parsed_from_raw = self._try_parse_from_raw_response(raw_response)
-            if parsed_from_raw:
-                return parsed_from_raw
+        # Extract text content (primary response)
+        text_parts = []
+        thinking_parts = []
 
-        # Try direct JSON parse first
-        if content.strip():
-            try:
-                data = json.loads(content)
-                if isinstance(data, dict) and "recommended_action" in data:
-                    return data
-            except (json.JSONDecodeError, TypeError):
-                pass
+        for block in content:
+            if isinstance(block, TextContent):
+                text_parts.append(block.text)
+            elif hasattr(block, "thinking") and block.thinking:
+                thinking_parts.append(block.thinking)
+            elif isinstance(block, ToolUseContent):
+                # Tool use not expected in analyzer, but handle gracefully
+                logger.debug(f"Unexpected tool use in analyzer: {block.tool_use.name}")
 
-        # Try regex extraction for robustness (handles fenced markdown)
-        cleaned = self._strip_markdown_fences(content)
-        if cleaned.strip():
-            try:
-                data = json.loads(cleaned)
-                if isinstance(data, dict) and "recommended_action" in data:
-                    return data
-            except (json.JSONDecodeError, TypeError):
-                pass
+        full_text = "\n".join(text_parts)
 
-        # Try simpler regex fallback
-        match = self._json_pattern.search(content)
+        # Try to parse JSON from text
+        result = self._extract_json_from_text(full_text)
+
+        # If we have thinking content and no explicit reasoning, prepend it
+        if thinking_parts and result.get("reasoning"):
+            thinking_summary = thinking_parts[0][:200] + "..." if len(thinking_parts[0]) > 200 else thinking_parts[0]
+            result["_thinking"] = "\n".join(thinking_parts)
+
+        return result
+
+    def _extract_json_from_text(self, text: str) -> dict[str, Any]:
+        """Extract JSON analysis from text response.
+
+        Handles markdown fences and validates structure.
+
+        Args:
+            text: Raw text content
+
+        Returns:
+            Parsed dict or fallback defaults
+        """
+        import json
+        import re
+
+        cleaned = text.strip()
+
+        # Remove markdown fences if present
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            # Find first and last fence
+            start_idx = 0
+            end_idx = len(lines) - 1
+
+            for i, line in enumerate(lines):
+                if line.strip().startswith("```"):
+                    if start_idx == 0 and i == 0:
+                        start_idx = i + 1
+                    elif end_idx == len(lines) - 1:
+                        end_idx = i
+                        break
+
+            cleaned = "\n".join(lines[start_idx:end_idx]).strip()
+
+        # Try to parse JSON
+        try:
+            data = json.loads(cleaned)
+            if isinstance(data, dict) and "recommended_action" in data:
+                return data
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try to extract JSON from larger text
+        json_pattern = re.compile(r'\{[^{}]*"recommended_action"[^{}]*\}', re.DOTALL)
+        match = json_pattern.search(text)
         if match:
             try:
                 data = json.loads(match.group())
-                if isinstance(data, dict) and "recommended_action" in data:
+                if "recommended_action" in data:
                     return data
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Fallback: extract action via regex, use defaults for rest
-        action_match = self._action_pattern.search(content)
+        # Fallback: try to extract action via regex
+        action_pattern = re.compile(
+            r'"recommended_action"\s*:\s*"([^"]+)"',
+            re.IGNORECASE,
+        )
+        action_match = action_pattern.search(text)
+
         if action_match:
             action = action_match.group(1)
-            # Validate action
             valid_actions = {a.value for a in RecommendedAction}
             if action not in valid_actions:
                 action = "maintain"
+
             return {
                 "recommended_action": action,
                 "reasoning": "Analysis completed with default confidence due to parsing issue",
@@ -188,85 +264,18 @@ class AnalyzerAgent:
             "key_factors": ["Analysis failed"],
         }
 
-    def _try_parse_from_raw_response(self, raw_response: dict) -> dict | None:
-        """Attempt to parse response from raw API response.
-
-        Mini-Agent pattern: check message.content AND tool_calls in raw response.
-
-        Args:
-            raw_response: Full API response dict
-
-        Returns:
-            Parsed dict if successful, None otherwise
-        """
-        try:
-            # Navigate typical OpenAI-compatible response structure
-            # {"choices": [{"message": {"content": "...", "tool_calls": [...]}}]}
-            choices = raw_response.get("choices", [])
-            if not choices:
-                return None
-
-            message = choices[0].get("message", {})
-
-            # Check for tool_calls first (even if content is empty)
-            tool_calls = message.get("tool_calls")
-            if tool_calls:
-                # Tool calling mode - extract from first tool call
-                logger.debug(f"Response contains {len(tool_calls)} tool calls")
-                # For now, we don't handle tool calling in analyzer
-                # But we could extract arguments from tool call if needed
-
-            # Try content as before
-            content = message.get("content")
-            if content and isinstance(content, str):
-                try:
-                    data = json.loads(content)
-                    if isinstance(data, dict) and "recommended_action" in data:
-                        return data
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
-            logger.debug(f"Raw response parsing failed: {e}")
-
-        return None
-
-    def _strip_markdown_fences(self, content: str) -> str:
-        """Strip markdown code fences from content.
-
-        Handles:
-        - ```json ... ```
-        - ``` ... ```
-
-        Args:
-            content: Raw content possibly with markdown fences
-
-        Returns:
-            Content with fences stripped
-        """
-        # Remove ```json and ``` blocks
-        lines = content.split("\n")
-        result_lines = []
-        in_fence = False
-
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("```"):
-                in_fence = not in_fence
-                continue
-            if not in_fence:
-                result_lines.append(line)
-
-        return "\n".join(result_lines).strip()
-
     def _build_analysis(
-        self, metrics: CampaignMetrics, parsed: dict
+        self,
+        metrics: CampaignMetrics,
+        parsed: dict[str, Any],
+        response: Any,  # LLMResponse
     ) -> CampaignAnalysis:
         """Build CampaignAnalysis from parsed LLM response.
 
         Args:
             metrics: Original campaign metrics
-            parsed: Parsed LLM response
+            parsed: Parsed LLM response dict
+            response: Full LLM response (for metadata)
 
         Returns:
             CampaignAnalysis instance
@@ -294,10 +303,22 @@ class AnalyzerAgent:
         if not isinstance(key_factors, list):
             key_factors = [str(key_factors)]
 
-        return CampaignAnalysis(
+        analysis = CampaignAnalysis(
             campaign_id=metrics.campaign_id,
             recommended_action=action,
             reasoning=reasoning,
             confidence=confidence,
             key_factors=key_factors,
         )
+
+        # Attach metadata for observability (not part of domain model)
+        analysis._metadata = {
+            "model": response.model,
+            "provider": response.provider,
+            "latency_ms": response.latency_ms,
+            "usage": response.usage.model_dump() if response.usage else None,
+            "cost": response.cost.model_dump() if response.cost else None,
+            "thinking": parsed.get("_thinking"),  # Captured thinking if enabled
+        }
+
+        return analysis
