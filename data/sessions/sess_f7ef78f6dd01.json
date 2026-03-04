@@ -1,0 +1,41 @@
+{
+  "id": "sess_f7ef78f6dd01",
+  "created_at": "2026-03-04T10:14:02.076917",
+  "updated_at": "2026-03-04T10:14:45.260254",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a Campaign Analyst agent. Your role is to analyze marketing campaign metrics and recommend optimal actions.\n\nYou must respond with valid JSON only (no additional text). Use this exact schema:\n{\n  \"recommended_action\": \"maintain\" | \"pause_campaign\" | \"creative_refresh\" | \"audience_expansion\" | \"bid_adjustment\",\n  \"reasoning\": \"<your analysis in 1-2 sentences, max 500 chars>\",\n  \"confidence\": {\n    \"overall_score\": <0.0-1.0>,\n    \"data_quality\": <0.0-1.0>,\n    \"recommendation_strength\": <0.0-1.0>\n  },\n  \"key_factors\": [\"<factor1>\", \"<factor2>\"]\n}\n\nAvailable actions:\n- maintain: Campaign is performing well, no changes needed\n- pause_campaign: Critical issues requiring immediate stop (extreme CPA, very low CTR, etc.)\n- creative_refresh: CTR declining with old creative (>14 days)\n- audience_expansion: High audience saturation, stable performance\n- bid_adjustment: Moderate CPA changes without creative issues\n\nAnalyze the campaign metrics provided and return your recommendation.",
+      "timestamp": null
+    },
+    {
+      "role": "user",
+      "content": "Analyze campaign: quick_test",
+      "timestamp": 1772619248165
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Action: bid_adjustment"
+        },
+        {
+          "type": "text",
+          "text": "Reasoning: CPA has increased 1.5x in 3 days while CTR declined from 3.50% to 3.00%, indicating performance degradation. However, creative is only 10 days old and audience saturation is moderate at 40%. The issue appears to be bid-related rather than creative fatigue, warranting bid adjustment to control rising CPA."
+        }
+      ],
+      "timestamp": 1772619248166
+    },
+    {
+      "role": "user",
+      "content": "Validation: approve",
+      "timestamp": 1772619285260
+    }
+  ],
+  "context_budget": 16000,
+  "total_tokens_used": 0,
+  "metadata": {
+    "type": "campaign_analysis"
+  }
+}

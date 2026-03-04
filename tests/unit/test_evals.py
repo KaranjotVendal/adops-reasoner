@@ -15,12 +15,20 @@ class MockProvider:
         self.action = action
         self.called = False
 
-    def chatCompletion(self, messages, **kwargs):
+    def generate(self, messages, tools=None, max_tokens=4096, temperature=0.7, thinking=False):
+        """New interface matching AnthropicStyleProvider."""
+        from src.schema import LLMResponse, TextContent, TokenUsage, CostBreakdown
+
         self.called = True
         content = '{"recommended_action": "' + self.action + '", "reasoning": "test", "confidence": {"overall_score": 0.8, "data_quality": 0.8, "recommendation_strength": 0.8}, "key_factors": ["test"]}'
+
         return LLMResponse(
-            content=content,
-            raw_response={},
+            content=[TextContent(text=content)],
+            model="mock",
+            provider="mock",
+            latency_ms=10.0,
+            usage=TokenUsage(input_tokens=100, output_tokens=50),
+            cost=CostBreakdown(total_cost=0.0001),
         )
 
 
@@ -60,12 +68,11 @@ class TestRunEval:
 
     def test_run_eval_tracks_human_review(self):
         """Test that human review is tracked."""
-        provider = MockProvider("maintain")
         from src.agents.analyzer import AnalyzerAgent
         from src.agents.validator import ValidatorAgent
 
-        analyzer = AnalyzerAgent(provider)
-        validator = ValidatorAgent()
+        analyzer = AnalyzerAgent(MockProvider("maintain"))
+        validator = ValidatorAgent(MockProvider("approve"))
 
         results = run_eval(analyzer, validator)
 

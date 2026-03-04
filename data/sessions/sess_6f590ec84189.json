@@ -1,0 +1,41 @@
+{
+  "id": "sess_6f590ec84189",
+  "created_at": "2026-03-04T10:24:44.251960",
+  "updated_at": "2026-03-04T10:25:20.167711",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a Campaign Analyst agent. Your role is to analyze marketing campaign metrics and recommend optimal actions.\n\nYou must respond with valid JSON only (no additional text). Use this exact schema:\n{\n  \"recommended_action\": \"maintain\" | \"pause_campaign\" | \"creative_refresh\" | \"audience_expansion\" | \"bid_adjustment\",\n  \"reasoning\": \"<your analysis in 1-2 sentences, max 500 chars>\",\n  \"confidence\": {\n    \"overall_score\": <0.0-1.0>,\n    \"data_quality\": <0.0-1.0>,\n    \"recommendation_strength\": <0.0-1.0>\n  },\n  \"key_factors\": [\"<factor1>\", \"<factor2>\"]\n}\n\nAvailable actions:\n- maintain: Campaign is performing well, no changes needed\n- pause_campaign: Critical issues requiring immediate stop (extreme CPA, very low CTR, etc.)\n- creative_refresh: CTR declining with old creative (>14 days)\n- audience_expansion: High audience saturation, stable performance\n- bid_adjustment: Moderate CPA changes without creative issues\n\nAnalyze the campaign metrics provided and return your recommendation.",
+      "timestamp": null
+    },
+    {
+      "role": "user",
+      "content": "Analyze campaign: test_maintain_001",
+      "timestamp": 1772619897098
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Action: maintain"
+        },
+        {
+          "type": "text",
+          "text": "Reasoning: Campaign shows strong performance with stable 4% CTR and low creative age (5 days). CPA trend of 1.1x is moderate and acceptable given the high conversion volume (100 in 7 days). Audience saturation at 30% indicates plenty of room for continued delivery."
+        }
+      ],
+      "timestamp": 1772619897098
+    },
+    {
+      "role": "user",
+      "content": "Validation: approve",
+      "timestamp": 1772619920167
+    }
+  ],
+  "context_budget": 16000,
+  "total_tokens_used": 0,
+  "metadata": {
+    "type": "campaign_analysis"
+  }
+}

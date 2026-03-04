@@ -3,23 +3,17 @@
 import json
 from pathlib import Path
 
-from src.agents.analyzer import AnalyzerAgent
-from src.agents.orchestrator import CampaignOrchestrator
-from src.agents.providers.minimax import MiniMaxProvider
-from src.agents.validator import ValidatorAgent
+from src.agents import Orchestrator
 from src.data.scenario_generator import generate_scenario
 
 
-def create_orchestrator() -> CampaignOrchestrator:
-    """Create orchestrator with MiniMax provider.
+def create_orchestrator() -> Orchestrator:
+    """Create orchestrator with default providers.
 
     Returns:
-        Configured CampaignOrchestrator
+        Configured Orchestrator
     """
-    provider = MiniMaxProvider()
-    analyzer = AnalyzerAgent(provider)
-    validator = ValidatorAgent()
-    return CampaignOrchestrator(analyzer, validator)
+    return Orchestrator()
 
 
 def demo_with_synthetic_scenario():

@@ -56,7 +56,17 @@ def run_eval(analyzer, validator=None) -> dict:
 
         # Run validation if provided
         if validator:
-            validation = validator.validate(analysis, metrics)
+            analysis_result = {
+                "recommended_action": analysis.recommended_action.value,
+                "reasoning": analysis.reasoning,
+                "confidence": analysis.confidence.model_dump(),
+                "key_factors": analysis.key_factors,
+            }
+            validation = validator.validate(
+                campaign_id=metrics.campaign_id,
+                analysis_result=analysis_result,
+                original_metrics=metrics.model_dump(),
+            )
             if validation.requires_human_review:
                 human_review_triggered += 1
 

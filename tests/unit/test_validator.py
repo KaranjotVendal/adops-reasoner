@@ -1,228 +1,226 @@
-"""Unit tests for validator agent."""
+"""Unit tests for validator agent (new LLM-based implementation)."""
 
 import pytest
 
-from src.agents.validator import ValidatorAgent, CONFLICT_THRESHOLD, CONFIDENCE_THRESHOLD
+from src.agents.validator import ValidatorAgent, ValidationResult, DEFAULT_VALIDATOR_SYSTEM_PROMPT
 from src.domain.models import (
-    AnalysisConfidence,
-    CampaignAnalysis,
     CampaignMetrics,
-    RecommendedAction,
-    ValidationResult,
 )
 
 
+class MockProvider:
+    """Mock provider for testing validator."""
+
+    def __init__(self, response_content: str):
+        self.response_content = response_content
+
+    def generate(self, messages, tools=None, max_tokens=4096, temperature=0.2, thinking=False):
+        from src.schema import LLMResponse, TextContent
+
+        return LLMResponse(
+            content=[TextContent(text=self.response_content)],
+            model="mock",
+            provider="mock",
+            latency_ms=10.0,
+        )
+
+
 class TestValidatorAgent:
-    """Tests for ValidatorAgent."""
+    """Tests for ValidatorAgent with LLM-based validation."""
 
-    def test_validate_approves_high_confidence(self):
-        """Test that high confidence recommendation is approved."""
-        validator = ValidatorAgent()
+    def test_validate_returns_validation_result(self):
+        """Test that validate returns a ValidationResult."""
+        mock_response = """{
+            "decision": "approve",
+            "confidence": 0.92,
+            "feedback": "Analysis aligns with metrics",
+            "suggested_changes": [],
+            "requires_human_review": false
+        }"""
+        provider = MockProvider(mock_response)
+        validator = ValidatorAgent(provider)
 
-        analysis = CampaignAnalysis(
+        analysis_result = {
+            "recommended_action": "maintain",
+            "reasoning": "Campaign is stable",
+            "confidence": {"overall_score": 0.85, "data_quality": 0.9, "recommendation_strength": 0.8},
+            "key_factors": ["Stable metrics"],
+        }
+
+        result = validator.validate(
             campaign_id="test_001",
-            recommended_action=RecommendedAction.MAINTAIN,
-            reasoning="All metrics stable",
-            confidence=AnalysisConfidence(
-                overall_score=0.9,
-                data_quality=0.9,
-                recommendation_strength=0.85,
-            ),
-            key_factors=["Stable metrics"],
+            analysis_result=analysis_result,
+            original_metrics=None,
         )
 
-        metrics = CampaignMetrics(
-            campaign_id="test_001",
-            cpa_3d_trend=1.1,
-            ctr_current=0.04,
-            ctr_7d_avg=0.04,
-            audience_saturation=0.5,
-            creative_age_days=7,
-            conversion_volume_7d=100,
-            spend_7d=1000.0,
-        )
-
-        result = validator.validate(analysis, metrics)
-
-        assert result.is_valid is True
+        assert isinstance(result, ValidationResult)
+        assert result.decision == "approve"
+        assert result.confidence == 0.92
         assert result.requires_human_review is False
-        assert result.conflict_detected is False
-        assert result.final_recommendation == RecommendedAction.MAINTAIN
 
-    def test_validate_requires_human_review_low_confidence(self):
-        """Test that low confidence triggers human review."""
-        validator = ValidatorAgent()
+    def test_validate_rejects_invalid_analysis(self):
+        """Test validator can reject analysis."""
+        mock_response = """{
+            "decision": "reject",
+            "confidence": 0.75,
+            "feedback": "Reasoning doesn't match metrics",
+            "suggested_changes": ["Check CPA trend again"],
+            "requires_human_review": true
+        }"""
+        provider = MockProvider(mock_response)
+        validator = ValidatorAgent(provider)
 
-        analysis = CampaignAnalysis(
+        analysis_result = {
+            "recommended_action": "maintain",
+            "reasoning": "Everything looks good",
+            "confidence": {"overall_score": 0.9},
+            "key_factors": [],
+        }
+
+        result = validator.validate(
             campaign_id="test_002",
-            recommended_action=RecommendedAction.BID_ADJUSTMENT,
-            reasoning="Unclear metrics",
-            confidence=AnalysisConfidence(
-                overall_score=0.3,  # Below threshold
-                data_quality=0.8,
-                recommendation_strength=0.3,
-            ),
-            key_factors=[],
+            analysis_result=analysis_result,
         )
 
+        assert result.decision == "reject"
+        assert result.requires_human_review is True
+        assert len(result.suggested_changes) > 0
+
+    def test_validate_needs_info(self):
+        """Test validator can request more information."""
+        mock_response = """{
+            "decision": "needs_info",
+            "confidence": 0.6,
+            "feedback": "Need historical data to validate",
+            "suggested_changes": [],
+            "requires_human_review": false
+        }"""
+        provider = MockProvider(mock_response)
+        validator = ValidatorAgent(provider)
+
+        analysis_result = {
+            "recommended_action": "bid_adjustment",
+            "reasoning": "CPA increasing",
+            "confidence": {"overall_score": 0.7},
+            "key_factors": ["CPA up"],
+        }
+
+        result = validator.validate(
+            campaign_id="test_003",
+            analysis_result=analysis_result,
+        )
+
+        assert result.decision == "needs_info"
+
+    def test_validate_with_metrics(self):
+        """Test validator with original metrics provided."""
+        mock_response = """{
+            "decision": "approve",
+            "confidence": 0.88,
+            "feedback": "Action matches data",
+            "suggested_changes": [],
+            "requires_human_review": false
+        }"""
+        provider = MockProvider(mock_response)
+        validator = ValidatorAgent(provider)
+
+        analysis_result = {
+            "recommended_action": "pause_campaign",
+            "reasoning": "CPA has tripled",
+            "confidence": {"overall_score": 0.9},
+            "key_factors": ["CPA 3x"],
+        }
+
         metrics = CampaignMetrics(
-            campaign_id="test_002",
-            cpa_3d_trend=1.5,
-            ctr_current=0.03,
+            campaign_id="test_004",
+            cpa_3d_trend=3.0,
+            ctr_current=0.01,
             ctr_7d_avg=0.03,
-            audience_saturation=0.6,
-            creative_age_days=10,
-            conversion_volume_7d=50,
-            spend_7d=500.0,
+            audience_saturation=0.8,
+            creative_age_days=25,
+            conversion_volume_7d=10,
+            spend_7d=3000.0,
         )
 
-        result = validator.validate(analysis, metrics)
-
-        assert result.is_valid is True
-        assert result.requires_human_review is True
-        assert result.final_recommendation == RecommendedAction.REQUIRES_HUMAN_REVIEW
-
-    def test_validate_requires_human_review_low_data_quality(self):
-        """Test that low data quality triggers human review."""
-        validator = ValidatorAgent()
-
-        analysis = CampaignAnalysis(
-            campaign_id="test_003",
-            recommended_action=RecommendedAction.MAINTAIN,
-            reasoning="Based on limited data",
-            confidence=AnalysisConfidence(
-                overall_score=0.7,
-                data_quality=0.2,  # Below conflict threshold
-                recommendation_strength=0.7,
-            ),
-            key_factors=[],
-        )
-
-        metrics = CampaignMetrics(
-            campaign_id="test_003",
-            cpa_3d_trend=1.1,
-            ctr_current=0.04,
-            ctr_7d_avg=0.04,
-            audience_saturation=0.5,
-            creative_age_days=7,
-            conversion_volume_7d=100,
-            spend_7d=1000.0,
-        )
-
-        result = validator.validate(analysis, metrics)
-
-        assert result.requires_human_review is True
-        assert "data quality" in result.conflict_details.lower()
-
-    def test_validate_detects_conflict_pause_vs_improving_cpa(self):
-        """Test conflict: pause_campaign but CPA improving and volume healthy."""
-        validator = ValidatorAgent()
-
-        analysis = CampaignAnalysis(
+        result = validator.validate(
             campaign_id="test_004",
-            recommended_action=RecommendedAction.PAUSE_CAMPAIGN,
-            reasoning="High CPA",
-            confidence=AnalysisConfidence(
-                overall_score=0.8,
-                data_quality=0.9,
-                recommendation_strength=0.8,
-            ),
-            key_factors=["CPA high"],
+            analysis_result=analysis_result,
+            original_metrics=metrics.model_dump(),
         )
 
-        # CPA improving (trend < 1.0) and high volume
-        metrics = CampaignMetrics(
-            campaign_id="test_004",
-            cpa_3d_trend=0.8,  # Improving
-            ctr_current=0.04,
-            ctr_7d_avg=0.04,
-            audience_saturation=0.5,
-            creative_age_days=7,
-            conversion_volume_7d=100,  # High
-            spend_7d=1000.0,
+        assert result.decision == "approve"
+        assert result.is_approved() is True
+
+    def test_fallback_parsing_on_invalid_json(self):
+        """Test fallback when LLM returns invalid JSON."""
+        mock_response = "I think this looks good, decision: approve"
+        provider = MockProvider(mock_response)
+        validator = ValidatorAgent(provider)
+
+        analysis_result = {
+            "recommended_action": "maintain",
+            "reasoning": "Stable",
+            "confidence": {"overall_score": 0.8},
+            "key_factors": [],
+        }
+
+        result = validator.validate(
+            campaign_id="test_005",
+            analysis_result=analysis_result,
         )
 
-        result = validator.validate(analysis, metrics)
-
-        assert result.conflict_detected is True
+        # Should fallback to reject with low confidence
+        assert result.decision == "reject"
         assert result.requires_human_review is True
 
-    def test_validate_detects_conflict_maintain_vs_extreme_cpa(self):
-        """Test conflict: maintain but extreme CPA rise."""
-        validator = ValidatorAgent()
 
-        analysis = CampaignAnalysis(
-            campaign_id="test_005",
-            recommended_action=RecommendedAction.MAINTAIN,
-            reasoning="Everything looks fine",
-            confidence=AnalysisConfidence(
-                overall_score=0.8,
-                data_quality=0.9,
-                recommendation_strength=0.8,
-            ),
-            key_factors=["Looking good"],
+class TestValidationResult:
+    """Tests for ValidationResult class."""
+
+    def test_is_approved(self):
+        """Test is_approved method."""
+        result = ValidationResult(
+            decision="approve",
+            confidence=0.9,
+            feedback="Looks good",
+            suggested_changes=[],
+            requires_human_review=False,
+        )
+        assert result.is_approved() is True
+
+        result2 = ValidationResult(
+            decision="reject",
+            confidence=0.5,
+            feedback="Issues found",
+            suggested_changes=["Fix this"],
+            requires_human_review=True,
+        )
+        assert result2.is_approved() is False
+
+    def test_to_dict(self):
+        """Test to_dict serialization."""
+        result = ValidationResult(
+            decision="approve",
+            confidence=0.85,
+            feedback="Valid analysis",
+            suggested_changes=[],
+            requires_human_review=False,
         )
 
-        # Extreme CPA rise
-        metrics = CampaignMetrics(
-            campaign_id="test_005",
-            cpa_3d_trend=3.5,  # Tripled
-            ctr_current=0.04,
-            ctr_7d_avg=0.04,
-            audience_saturation=0.5,
-            creative_age_days=7,
-            conversion_volume_7d=100,
-            spend_7d=1000.0,
-        )
+        data = result.to_dict()
 
-        result = validator.validate(analysis, metrics)
-
-        assert result.conflict_detected is True
-        assert "CPA has tripled" in result.conflict_details
-
-    def test_validate_passes_conflict_check(self):
-        """Test that valid recommendations without conflicts pass."""
-        validator = ValidatorAgent()
-
-        analysis = CampaignAnalysis(
-            campaign_id="test_006",
-            recommended_action=RecommendedAction.CREATIVE_REFRESH,
-            reasoning="CTR dropping with old creative",
-            confidence=AnalysisConfidence(
-                overall_score=0.85,
-                data_quality=0.9,
-                recommendation_strength=0.8,
-            ),
-            key_factors=["CTR down", "Old creative"],
-        )
-
-        # Valid: CTR drop + old creative
-        metrics = CampaignMetrics(
-            campaign_id="test_006",
-            cpa_3d_trend=1.1,
-            ctr_current=0.02,
-            ctr_7d_avg=0.04,  # 50% drop
-            audience_saturation=0.5,
-            creative_age_days=30,  # Old
-            conversion_volume_7d=50,
-            spend_7d=500.0,
-        )
-
-        result = validator.validate(analysis, metrics)
-
-        assert result.is_valid is True
-        assert result.requires_human_review is False
-        assert result.conflict_detected is False
-        assert result.final_recommendation == RecommendedAction.CREATIVE_REFRESH
+        assert data["decision"] == "approve"
+        assert data["confidence"] == 0.85
+        assert data["requires_human_review"] is False
 
 
-class TestValidatorThresholds:
-    """Tests for validator threshold constants."""
+class TestValidatorSystemPrompt:
+    """Tests for validator system prompt."""
 
-    def test_confidence_threshold_value(self):
-        """Test confidence threshold is set correctly."""
-        assert CONFIDENCE_THRESHOLD == 0.5
-
-    def test_conflict_threshold_value(self):
-        """Test conflict threshold is set correctly."""
-        assert CONFLICT_THRESHOLD == 0.3
+    def test_system_prompt_contains_required_elements(self):
+        """Test that system prompt has required instructions."""
+        assert "decision" in DEFAULT_VALIDATOR_SYSTEM_PROMPT
+        assert "confidence" in DEFAULT_VALIDATOR_SYSTEM_PROMPT
+        assert "feedback" in DEFAULT_VALIDATOR_SYSTEM_PROMPT
+        assert "approve" in DEFAULT_VALIDATOR_SYSTEM_PROMPT
+        assert "reject" in DEFAULT_VALIDATOR_SYSTEM_PROMPT
