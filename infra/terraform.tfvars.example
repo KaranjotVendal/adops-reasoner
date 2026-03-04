@@ -1,7 +1,21 @@
-# Example terraform variables
+# Terraform variables for Campaign Analyst deployment
 # Copy to terraform.tfvars and fill in your values
 
-project_id           = "your-gcp-project-id"
+# Required
+project_id = "your-gcp-project-id"
+
+# Optional (defaults shown)
 region               = "us-central1"
-service_account_email = "your-service-account@your-project.iam.gserviceaccount.com"
-minimax_api_key      = "your-minimax-api-key"
+service_name         = "campaign-analyst"
+container_image      = ""  # Uses ghcr.io/{project_id}/campaign-analyst:latest by default
+
+# API Keys (at least one required for operation)
+kimi_api_key      = "sk-..."  # Optional - for Kimi provider
+minimax_api_key   = "sk-..."  # Optional - for MiniMax provider
+
+# Model Configuration
+analyzer_model  = "k2p5"           # Options: k2p5, kimi-k2-thinking, MiniMax-M2.5, MiniMax-M2.5-highspeed
+validator_model = "MiniMax-M2.5"   # Options: k2p5, kimi-k2-thinking, MiniMax-M2.5, MiniMax-M2.5-highspeed
+
+# Session storage (Cloud Run uses ephemeral /tmp)
+session_storage_path = "/tmp/sessions"

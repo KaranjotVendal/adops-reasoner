@@ -50,9 +50,9 @@ class TestTerraformConfig:
         content = main_tf.read_text()
 
         # Check for required resources
-        assert "google_cloud_run_service" in content
-        "google_secret_manager_secret" in content
-        "google_service_account" in content
+        assert "google_cloud_run_v2_service" in content
+        assert "google_secret_manager_secret" in content
+        assert "google_service_account" in content
 
     def test_gitignore_infra(self):
         """Test that infra has .gitignore."""
